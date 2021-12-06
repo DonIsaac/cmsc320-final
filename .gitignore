@@ -1,3 +1,13 @@
+# Misc
+.DS_Store
+
+# Makefile target files
+img.build
+img.tag
+
+# requests_cache files
+.cache
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -127,3 +137,4 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
