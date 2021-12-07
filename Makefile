@@ -15,6 +15,9 @@ default: up
 
 .PHONY: req-save
 
+install:
+	pip install -r requirements.txt
+
 # Save pip3 package requirements to requirements.txt
 save:
 	# Conda output format
