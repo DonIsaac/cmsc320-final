@@ -5,3 +5,4 @@ dnspython # Required for pymongo[srv]
 pymongo[srv] # Support for mongodb+srv:// URIs
 python_dotenv
 beautifulsoup4
+pytest
