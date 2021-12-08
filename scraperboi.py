@@ -16,7 +16,7 @@ def get_mongo_client() -> MongoClient:
 # print(_mongo_uri)
 
 client = get_mongo_client()
-db = client['stackOverflowTesetDB']
+db = client['stackOverflowDB']
 stack = StackOverflowScraper(db=db)
 
-stack.scrape_and_upsert()
+stack.scrape_and_upsert(drop=False, page=134, maxpages=100)

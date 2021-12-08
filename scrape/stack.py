@@ -72,12 +72,13 @@ class StackOverflowScraper:
             # Remove questions with no answers. Also, questions with low scores are less likely
             # to have useful answers, it's probably just someone insulting the poster for
             # being a noob.
-            page = list(filter(lambda q: q['answer_count'] > 0 and q['score'] >= 0, page))
+            page = list(filter(lambda q: q['answer_count'] > 0 and q['score'] > 0, page))
 
             # Mark and store questions with no quality answers
             marked_questions: List[str] = []
             answers_to_store: List[Dict] = []
 
+            print(f'Scraping {len(page)} questions ', end='')
             for q in page:
 
                 # Scrape answers for each question
@@ -89,7 +90,7 @@ class StackOverflowScraper:
                     marked_questions.append(q['question_id'])
                     continue
                 else:
-                    print('.', end = '')
+                    print('.', end = '', flush = True)
 
                 # Add the question_id as a foreign key to the answers
                 for a in answers:
@@ -98,7 +99,7 @@ class StackOverflowScraper:
                 answers_to_store.extend(answers)
 
                 # Sleep for a bit to avoid hitting the API too hard
-                time.sleep(0.5 + random.random() / 2)
+                time.sleep(0.6 + random.random() / 2)
 
             print('')
 
@@ -176,6 +177,7 @@ class StackOverflowScraper:
             query_params = base_query_params.copy()
             query_params['page'] = page
 
+            print(f'Requesting page # {page}')
             # Returns a Common Wrapper Object
             # https://api.stackexchange.com/docs/wrapper
             r = self.session.get('https://api.stackexchange.com/2.3/questions', params=query_params)
