@@ -1,23 +1,125 @@
+from pymongo.database import Database
+from pymongo import UpdateOne
 import requests
 import requests_cache # https://requests-cache.readthedocs.io/en/stable/
 import datetime
-from typing import List, Dict, Tuple, Optional, Union
-import json
+from typing import Generator, List, Dict, Optional, Union
 import time
-from bs4 import BeautifulSoup
 import random
+from bs4 import BeautifulSoup
 
 class StackOverflowScraper:
+
     def __init__(self, **kwargs):
-        cache_path: Union[str, bool] = kwargs.get('cache_path', '.cache/stack_cache')
-        if type(cache_path) is str:
-            self.session = requests_cache.CachedSession(cache_path, cache_control=True, stale_if_error=True, backend='filesystem')
+        # May be a file path (str), a session object (CachedSession), False (no caching), or None (default)
+        cache: Union[str, bool, requests_cache.CachedSession] = kwargs.get('cache', '.cache/stack_cache')
+
+        if type(cache) is str:
+            self.session = requests_cache.CachedSession(cache, cache_control=True, stale_if_error=True, backend='filesystem')
+        elif type(cache) is requests_cache.CachedSession:
+            self.session = cache
         else:
             self.session = requests.Session()
-        
-        # self.session = session
 
-    def get_questions(self, **kwargs):
+        # MongoDB database to store scraped data in
+        self.db: Union[Database, None] = kwargs.get('db', None)
+
+    
+
+
+    def __del__(self):
+        self.session.close()
+
+
+
+    def scrape_and_upsert(self, **kwargs) -> None:
+        """
+        Scrapes questions and their answers from Stack Overflow and inserts
+        them into the database. If the question already exists in the database,
+        it will be updated.
+
+        A `db` keyword argument must have been provided to the constructor,
+        otherwise this method will raise an exception.
+        
+        ## Keyword arguments:
+
+        - `drop`     -- (bool) If True, drop the `question` and `answer`
+                        collections before scraping. (default: False)
+        - `pagesize` -- (int) The number of questions to retrieve per API call. Must
+                        be 1<= `pagesize` <= 100. (default: 100)
+        - `page`     -- (int) The page of questions to start at. Must be > 0.
+                        (default: 1)
+        - `api_key`  -- (str | None) The Stack Overflow API key to use. (default: None)
+        - `maxpages` -- (int) The maximum number of question batches to scrape,
+                        each of size `pagesize`. (default: 10)
+        """
+
+        drop: bool = kwargs.get('drop', False)
+
+        if self.db is None:
+            raise Exception('No database provided')
+
+        # Drop the question and answer collections if requested
+        if drop:
+            print('Dropping question and answer collections')
+            self.db.questions.drop()
+            self.db.answers.drop()
+
+        # Iterate over each questions batch obtained from the API
+        for page in self.get_questions(**kwargs):
+            assert type(page) is list
+
+            # Remove questions with no answers. Also, questions with low scores are less likely
+            # to have useful answers, it's probably just someone insulting the poster for
+            # being a noob.
+            page = list(filter(lambda q: q['answer_count'] > 0 and q['score'] >= 0, page))
+
+            # Mark and store questions with no quality answers
+            marked_questions: List[str] = []
+            answers_to_store: List[Dict] = []
+
+            for q in page:
+
+                # Scrape answers for each question
+                answers = self.scrape_answers(q['link'])
+
+                # Mark the question for removal if it has no quality answers
+                if not len(answers):
+                    print('x', end = '')
+                    marked_questions.append(q['question_id'])
+                    continue
+                else:
+                    print('.', end = '')
+
+                # Add the question_id as a foreign key to the answers
+                for a in answers:
+                    a['question_id'] = q['question_id']
+
+                answers_to_store.extend(answers)
+
+                # Sleep for a bit to avoid hitting the API too hard
+                time.sleep(0.5 + random.random() / 2)
+
+            print('')
+
+            # Remove questions with no quality answers
+            if len(marked_questions):
+                print(f'Removing {len(marked_questions)} questions with no quality answers')
+                page = list(filter(lambda q: q['question_id'] not in marked_questions, page))
+
+            # Store the questions
+            questions_upsert = [UpdateOne({'_id': q['question_id']}, {'$set': q}, upsert=True) for q in page]
+            questions_result = self.db.questions.bulk_write(questions_upsert)
+
+            # Store the answers
+            answers_upsert = [UpdateOne({'_id': a['answer_id']}, {'$set': a}, upsert=True) for a in answers_to_store]
+            answers_result = self.db.answers.bulk_write(answers_upsert)
+
+            print(f'Stored {questions_result.inserted_count} questions and {answers_result.inserted_count} answers')
+
+
+
+    def get_questions(self, **kwargs) -> Generator[List[Dict], None, None]:
         """
         Gets recent questions from Stack Overflow using the Stack Overflow API.
 
@@ -32,10 +134,13 @@ class StackOverflowScraper:
 
         ## Keyword arguments:
 
-        pagesize -- The number of questions to retrieve per API call. Must be 1<= `pagesize` <= 100. (default: 100) 
-        page -- The page of questions to start at. Must be > 0. (default: 1)
-        maxpages -- The maximum number of pages to retrieve. Must be > 0. (default: 10)
-        api_key -- The Stack Overflow API key to use. (default: None)
+        * `pagesize` -- The number of questions to retrieve per API call. Must
+                        be 1<= `pagesize` <= 100. (default: 100) 
+        * `page`     -- The page of questions to start at. Must be > 0.
+                        (default: 1)
+        * `maxpages` -- The maximum number of pages to retrieve. Must be > 0.
+                        (default: 10)
+        * `api_key`  -- The Stack Overflow API key to use. (default: None)
         """
         
         pagesize: int = kwargs.get('pagesize', 100) # How many questions to return per page
@@ -104,7 +209,8 @@ class StackOverflowScraper:
             has_more: bool = body['has_more']
             done = not body['has_more'] or body['quota_remaining'] <= 0
 
-            print('\r', f'Got {pagesize} questions from page #{page} (quota: {quota_remaining}/{quota_max})', end='')
+            print(f'Got {pagesize} questions from page #{page} (quota: {quota_remaining}/{quota_max})')
+            # print('\r', f'Got {pagesize} questions from page #{page} (quota: {quota_remaining}/{quota_max})', end='')
 
 
             # Check if we need to back off before sending more requests. Only necessary if we're not done.
@@ -113,7 +219,53 @@ class StackOverflowScraper:
                 print(f'Backoff requested, sleeping for {backoff} seconds')
                 time.sleep(backoff)
 
+
+
     def scrape_answers(self, url: str) -> List[Dict]:
+        """
+        Scrapes the answers for a given question URL.
+
+        Given a URL to a StackOverflow question page, this method will return
+        a list of answer objects as dicts. If the question has no answers, an
+        empty list will be returned.
+        
+        Each answer object contains the following keys:
+        * `answer_id`   -- The ID of the answer (int). This is the same ID used
+                           in the StackOverflow API, and is therefore unique to
+                           the answer.
+
+        * `snippets`    -- All code snippets contained in the answer, joined by
+                           newlines.
+
+        * `score`       -- The score of the answer (int). Upvotes minus downvotes.
+
+        * `is_accepted` -- Whether the OP accepted the  answer is accepted (bool).
+
+        * `source`      -- URL to the answer (str).
+
+        * `author_id`   -- The User ID of the author (int | None). If answered 
+                           anonymously, this will be None. If answered by
+                           the community, this will be -1.
+
+        * `author_name` -- The name of the author (str). May be `'anonymous'`
+                           or `'community'`.
+
+        * `page_pos`    -- The position of the answer on the page (int). Value
+                           is [0, num_answers)
+
+        * `is_highest_score` -- Whether the answer has the highest score among
+                                all other answers (bool).
+
+        * `question_has_highest_accepted_answer` -- Whether any of the answers
+                                                    to the question have the 
+                                                    highest score and are also
+                                                    accepted by the OP (bool).
+        ## Arguments:
+        - `url` -- The URL of the question to scrape answers for.
+
+        ## Returns:
+        A list of answer objects as dicts.
+        """
 
         # Load the page into BeautifulSoup
         r = self.session.get(url)
