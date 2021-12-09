@@ -8,6 +8,10 @@
         "**/.DS_Store": true,
         "**/Thumbs.db": true,
         "**/.cache": true,
-        "**/.ipynb_checkpoints": true
+        "**/.ipynb_checkpoints": true,
+        "**/__pycache__": true,
+        "**/.pytest_cache": true,
+        "**/img.build": true,
+        "**/img.tag": true
     }
 }

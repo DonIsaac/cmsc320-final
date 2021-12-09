@@ -8,9 +8,7 @@ RUN apt-get update && apt-get install -y less make man git curl
 
 # Install some packages with conda, then fix file perms
 RUN conda install --quiet --yes \
-  'html5lib' \
-  'lxml' \
-  'nltk' && \
+  'html5lib' 'lxml' 'nltk' 'dnspython' 'pymongo' 'pymongo[srv]' && \
   conda clean --all -f -y && \
   fix-permissions "${CONDA_DIR}" && \
   fix-permissions "/home/${NB_USER}"

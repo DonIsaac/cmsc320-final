@@ -8,7 +8,7 @@ def stack():
 def test_scrape_stackoverflow_page(stack: StackOverflowScraper):
     assert type(stack) is StackOverflowScraper
     # Test that the scraper works
-    test_data = stack.scrape_page('https://stackoverflow.com/questions/69729326/endless-sine-generation-in-c')
+    test_data = stack.scrape_answers('https://stackoverflow.com/questions/69729326/endless-sine-generation-in-c')
 
     assert type(test_data) is list
     assert len(test_data) > 0

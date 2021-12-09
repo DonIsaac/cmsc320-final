@@ -1,14 +1,18 @@
+from bs4.element import ResultSet, Tag
 from pymongo.database import Database
 from pymongo import UpdateOne
 import requests
 import requests_cache # https://requests-cache.readthedocs.io/en/stable/
 import datetime
-from typing import Generator, List, Dict, Optional, Union
+from typing import Generator, List, Dict, Optional, Tuple, Union
 import time
 import random
 from bs4 import BeautifulSoup
 
 class StackOverflowScraper:
+    """
+    Scrapes StackOverflow for questions and answers.
+    """
 
     def __init__(self, **kwargs):
         # May be a file path (str), a session object (CachedSession), False (no caching), or None (default)
@@ -78,11 +82,17 @@ class StackOverflowScraper:
             marked_questions: List[str] = []
             answers_to_store: List[Dict] = []
 
+            time_start = time.time()
             print(f'Scraping {len(page)} questions ', end='')
             for q in page:
 
                 # Scrape answers for each question
-                answers = self.scrape_answers(q['link'])
+                try:
+                    answers = self.scrape_answers(q['link'])
+                except Exception as e:
+                    link = q['link']
+                    e.args += (f'Failed to scrape question: {link}',)
+                    raise e
 
                 # Mark the question for removal if it has no quality answers
                 if not len(answers):
@@ -116,7 +126,8 @@ class StackOverflowScraper:
             answers_upsert = [UpdateOne({'_id': a['answer_id']}, {'$set': a}, upsert=True) for a in answers_to_store]
             answers_result = self.db.answers.bulk_write(answers_upsert)
 
-            print(f'Stored {questions_result.inserted_count} questions and {answers_result.inserted_count} answers')
+            duration = time.time() - time_start
+            print(f'Stored {questions_result.upserted_count} questions and {answers_result.upserted_count} answers in {duration:,.2f} seconds')
 
 
 
@@ -177,16 +188,19 @@ class StackOverflowScraper:
             query_params = base_query_params.copy()
             query_params['page'] = page
 
-            print(f'Requesting page # {page}')
+            print(f'Requesting page #{page}')
             # Returns a Common Wrapper Object
             # https://api.stackexchange.com/docs/wrapper
             r = self.session.get('https://api.stackexchange.com/2.3/questions', params=query_params)
 
+            content_type = r.headers.get('content-type', '')
+            content_length = r.headers.get('content-length', 0)
+
             if r.status_code > 299:
-                if r.headers['content-length'] == 0:
+                if content_length == 0:
                     r.raise_for_status()
 
-                elif 'json' in r.headers['content-type']:
+                elif 'json' in content_type:
                     error_json = r.json()
                     raise requests.HTTPError(f'{r.status_code} {r.reason} API returned error {error_json["error_id"]}: {error_json["error_message"]}')
                     
@@ -194,10 +208,7 @@ class StackOverflowScraper:
                     raise requests.HTTPError(f'{r.status_code} {r.reason}: {r.text}')
 
                     
-            assert 'json' in r.headers['content-type'] # We're expecting JSON back
-
-            requests_made += 1
-            page += 1
+            assert 'json' in content_type # We're expecting JSON back
 
             # Yield each question in the response
             body = r.json()
@@ -209,9 +220,11 @@ class StackOverflowScraper:
             quota_remaining = body['quota_remaining']
             quota_max = body['quota_max']
             has_more: bool = body['has_more']
-            done = not body['has_more'] or body['quota_remaining'] <= 0
+            done = not has_more or body['quota_remaining'] <= 0
+            print(f'Got {pagesize} questions from page #{page} (#pages: {requests_made}/{maxpages}, quota: {quota_remaining}/{quota_max})')
 
-            print(f'Got {pagesize} questions from page #{page} (quota: {quota_remaining}/{quota_max})')
+            requests_made += 1
+            page += 1
             # print('\r', f'Got {pagesize} questions from page #{page} (quota: {quota_remaining}/{quota_max})', end='')
 
 
@@ -287,33 +300,77 @@ class StackOverflowScraper:
             if not len(snippet_elems):
                 continue
 
-            # Contains the user name and id of the answerer
-            user_details = answer.select_one('.post-signature .user-details > a')
+            snippets: str =  '\n'.join([code_block.text for code_block in snippet_elems])
+            snippets = snippets.strip()
+            assert snippets
 
-            # Extract the answer author's user id. Anonymous users have no user id
-            if user_details is None:
-                user_id = None
-                user_name = 'anonymous'
-            else:
-                _, _, user_id, user_name = user_details['href'].split('/') # takes form /users/:id/:name
-                user_id = int(user_id) # May be -1 if posted by 'community'
+            # Contains the user name and id of the answerer
+            author_id, author_name = self._scrape_user_details(answer)
 
             answer_data = {
                 # 'question_id': question_id,
-                'snippets': '\n'.join([code_block.text for code_block in snippet_elems]),
+                'snippets': snippets,
                 'score': int(answer['data-score']),
                 'answer_id': answer_id,
                 'page_pos': int(answer['data-position-on-page']),
                 'is_highest_scored': answer['data-highest-scored'] == '1',
                 'question_has_highest_accepted_answer': answer['data-question-has-accepted-highest-score'] == '1',
-                # 'is_accepted': answer.has_class('accepted-answer'),
                 'is_accepted': 'accepted-answer' in answer['class'],
-                # 'source': answer.select_one('a.js-share-link').get('href').strip(),
                 'source': f'https://stackoverflow.com/a/{answer_id}',
-                'author_id': user_id,
-                'author_username': user_name,
+                'author_id': author_id,
+                'author_username': author_name,
             }
 
             answers_parsed.append(answer_data)
 
         return answers_parsed
+
+    def _scrape_user_details(self, answer: Tag) -> Tuple[Union[int, None], str]:
+        assert answer
+
+        # Extract the answer author's user id. Anonymous users have no user id
+        user_details = answer.select('.post-signature .user-details > a')
+        if user_details is None or len(user_details) == 0:
+            return None, 'anonymous'
+        else:
+            try:
+                user_details = list(user_details)
+                # TODO: unravel user_details list
+
+                for details in user_details:
+
+                    # assert 'href' in details, 'No href attribute found in user details'
+
+                    if 'users' in details['href']:
+                        # has shape /user/:id/:name or /user/:id. In the latter
+                        # case, the name is in the text of the anchor tag
+                        link = details['href']
+                        link = link.strip(' /')
+                        link = [seg.strip() for seg in link.split('/')]
+                        assert len(link) > 1 and 'users' in link[0]
+                        link = link[1:]
+                        user_id = int(link.pop(0))
+                        if len(link) > 0:
+                            user_name = link.pop(0)
+                        else:
+                            user_name = details.text.strip()
+
+                        assert user_id is not None and user_name is not None
+                        return user_id, user_name
+
+                    # Skip links to community wiki
+                    elif 'collectives' in details['href']:
+                        user_details.extend(details.select('a'))
+                        continue
+
+                    # Skip history revision links
+                    elif 'title' in details.attrs and 'history' in details.attrs['title']:
+                        user_details.extend(details.select('a'))
+                        continue
+
+                print(f'WARNING: Could not find user details for answer {answer.prettify()[0:64]}...')
+                return None, 'unknown'
+
+            except Exception as e:
+                e.args += (f'Failed to parse user details from {details.prettify()}',)
+                raise e
