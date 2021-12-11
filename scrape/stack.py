@@ -119,7 +119,7 @@ class StackOverflowScraper:
                 answers_to_store.extend(answers)
 
                 # Sleep for a bit to avoid hitting the API too hard
-                time.sleep(0.6 + random.random() / 2)
+                time.sleep(0.60 + (2 * random.random() / 3))
 
             print('')
 

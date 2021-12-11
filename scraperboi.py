@@ -7,9 +7,12 @@ from urllib.parse import quote_plus
 
 load_dotenv()
 
-page_start: int = 746
+page_start: int = 760
 # Connect to MongoDB
 def get_mongo_client() -> MongoClient:
+    """
+    Creates a connection to MongoDB
+    """
 
     # A MongoDB connection string _must_ be provided
     mongo_uri = os.getenv('MONGO_URI')
