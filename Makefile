@@ -25,6 +25,8 @@ save:
 	# Pip output format
 	pip list --format=freeze > requirements.txt
 
+check:
+	pytest
 
 
 # =================================== DOCKER ===================================

@@ -15,6 +15,16 @@ class StackOverflowScraper:
     """
 
     def __init__(self, **kwargs):
+        """
+        Initializes a new StackOverflowScraper object.
+
+        ## Keyword Arguments
+
+        - `cache`   -- (str | requests_cache.CachedSession | False | None) The cache to use. If a string,
+                        it specifies the path to the cache directory. If False, no caching is used.
+                        If a requests_cache.CachedSession, it specifies the session to use. 
+                        (default: `.cache/stack_cache`)
+        """
         # May be a file path (str), a session object (CachedSession), False (no caching), or None (default)
         cache: Union[str, bool, requests_cache.CachedSession] = kwargs.get('cache', '.cache/stack_cache')
 
@@ -293,6 +303,9 @@ class StackOverflowScraper:
         for answer in answers:
             answer_cell = answer.select_one('.answercell')
 
+            if not answer_cell:
+                continue
+
             answer_id = int(answer['data-answerid'])
 
             # Get all code snippet elements for the answer, skipping if there are none
@@ -302,7 +315,9 @@ class StackOverflowScraper:
 
             snippets: str =  '\n'.join([code_block.text for code_block in snippet_elems])
             snippets = snippets.strip()
-            assert snippets
+
+            if not snippets:
+                continue
 
             # Contains the user name and id of the answerer
             author_id, author_name = self._scrape_user_details(answer)
@@ -372,5 +387,7 @@ class StackOverflowScraper:
                 return None, 'unknown'
 
             except Exception as e:
-                e.args += (f'Failed to parse user details from {details.prettify()}',)
+                # tag_tex = if details then details.prettify() else answer.prettify()[0:64]
+                tag_text = details.prettify() if details else answer.prettify()[0:64]
+                e.args += (f'Failed to parse user details from {tag_text}',)
                 raise e

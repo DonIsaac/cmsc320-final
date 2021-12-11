@@ -46,3 +46,8 @@ def test_scrape_stackoverflow_page(stack: StackOverflowScraper):
         assert type(answer['author_username']) is str
 
     print(test_data[0]['snippets'])
+
+def test_scrape_malformed_page(stack: StackOverflowScraper):
+    url = 'https://stackoverflow.com/questions/26260906/voronoi-diagram-bound-by-circular-tour'
+    test_data = stack.scrape_answers(url)
+    assert len(test_data) == 0

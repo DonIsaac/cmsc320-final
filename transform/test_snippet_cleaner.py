@@ -1,16 +1,22 @@
 import os
 from posix import listdir
-from typing import Dict
+from typing import Dict, TypedDict, NewType, Literal, List
 import pytest
-from clean.snippet import SnippetCleaner
+from transform.snippet import SnippetCleaner
 
+class TestCase(TypedDict):
+    name: str
+    content: str
+TestCase.__test__ = False
+
+TestCases = NewType('TestCases', Dict[Literal['valid', 'invalid'], Dict[Literal['c', 'cpp'], List[TestCase]]])
 @pytest.fixture(scope="function")
 def snippet_cleaner():
     return SnippetCleaner(verbose=True)
 
 @pytest.fixture
-def test_cases():
-    _test_cases = {
+def test_cases() -> TestCases:
+    _test_cases: TestCases = {
         'valid': {
             'c': [],
             'cpp': [],
@@ -32,7 +38,7 @@ def test_cases():
                 print(f'Skipping invalid test case file: {file}')
                 continue
 
-            test_case = {
+            test_case: TestCase = {
                 'name': os.path.abspath(os.path.join(root, file)),
                 'content': open(os.path.join(root, file)).read()
             }
@@ -43,17 +49,26 @@ def test_cases():
             elif ext in ['cpp', 'hpp']:
                 _test_cases[valid]['cpp'].append(test_case)
             else:
-                raise Exception(f'Unknown file extension "{ext}" for test case {file}')
+                print(f'Unknown file extension "{ext}" for test case {file}, skipping')
 
     return _test_cases
 
 
 # @pytest.mark.usefixtures("snippet_cleaner", "test_cases")
-def test_valid_c(snippet_cleaner: SnippetCleaner, test_cases):
+def test_valid_c(snippet_cleaner: SnippetCleaner, test_cases: TestCases):
     for test_case in test_cases['valid']['c']:
         print(test_case)
         # name, content = test_case
         # print(name)
         # print(content)
         is_valid_c, _ = snippet_cleaner.parse(test_case['content'], test_case['name'])
-        assert is_valid_c
+        assert is_valid_c, f'{test_case["name"]} is not valid C'
+
+def test_invalid_c(snippet_cleaner: SnippetCleaner, test_cases: TestCases):
+    for test_case in test_cases['invalid']['c']:
+        print(test_case)
+        # name, content = test_case
+        # print(name)
+        # print(content)
+        is_valid_c, _ = snippet_cleaner.parse(test_case['content'], test_case['name'])
+        assert not is_valid_c, f'{test_case["name"]} is valid C'

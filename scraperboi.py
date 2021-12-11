@@ -7,7 +7,7 @@ from urllib.parse import quote_plus
 
 load_dotenv()
 
-page_start: int = 650
+page_start: int = 746
 # Connect to MongoDB
 def get_mongo_client() -> MongoClient:
 
