@@ -13,5 +13,8 @@
         "**/.pytest_cache": true,
         "**/img.build": true,
         "**/img.tag": true
-    }
+    },
+    "cSpell.words": [
+        "LSTM"
+    ]
 }

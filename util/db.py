@@ -44,9 +44,11 @@ class Database:
         self._questions = self._db['questions']
         self._answers = self._db['answers']
 
+    @property
     def answers(self) -> Collection:
         return self._answers
 
+    @property
     def questions(self) -> Collection:
         return self._questions
   

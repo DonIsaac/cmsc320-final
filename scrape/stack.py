@@ -3,6 +3,7 @@ from bs4.element import ResultSet, Tag
 from pymongo.database import Database
 from pymongo import UpdateOne
 import requests
+from requests.models import HTTPError
 import requests_cache # https://requests-cache.readthedocs.io/en/stable/
 import datetime
 from typing import Generator, List, Dict, TypedDict, Optional, Tuple, Union
@@ -12,6 +13,7 @@ from bs4 import BeautifulSoup
 import email.utils as eut
 from scrape.types import RawStackOverflowAnswer, StackOverflowAnswer, StackOverflowQuestion
 
+clamp = lambda a, b, x: max(min(x, b), a)
 
 class StackOverflowScraper:
     """
@@ -88,7 +90,6 @@ class StackOverflowScraper:
                         each of size `pagesize`. (default: 10)
         """
 
-        print(f'Scraping started at {datetime.datetime.now()}')
         drop: bool = kwargs.get('drop', False)
 
         if self.db is None:
@@ -108,6 +109,7 @@ class StackOverflowScraper:
             # to have useful answers, it's probably just someone insulting the poster for
             # being a noob.
             page = list(filter(lambda q: q['answer_count'] > 0 and q['score'] > 0, page))
+            print(f'Removed {kwargs["pagesize"] - len(page)} questions with no answers or low scores')
 
             # Mark and store questions with no quality answers
             marked_questions: List[int] = []
@@ -129,6 +131,7 @@ class StackOverflowScraper:
                 if not len(raw_answers):
                     print('x', end = '')
                     marked_questions.append(q['question_id'])
+                    time.sleep(0.5)
                     continue
                 else:
                     print('.', end = '', flush = True)
@@ -144,8 +147,9 @@ class StackOverflowScraper:
             print('')
 
             # Remove questions with no quality answers
-            if len(marked_questions):
-                print(f'Removing {len(marked_questions)} questions with no quality answers')
+            num_remove = len(marked_questions)
+            if num_remove:
+                print(f'Removing {num_remove} questions with no quality answers (remaining: {len(page) - num_remove})')
                 page = list(filter(lambda q: q['question_id'] not in marked_questions, page))
 
             # Store the questions
@@ -199,6 +203,7 @@ class StackOverflowScraper:
         question_boundary_younger = datetime.datetime(2021, 12, 4) # No questions posted more recently than this will be returned
         done = False # Set to True if we hit our request quota or no more question data is available
         requests_made = 0
+        _backoff = self._backoff()
 
         # StackOverflow API query parameters common across all queries
         base_query_params: dict = {
@@ -218,94 +223,48 @@ class StackOverflowScraper:
             query_params = base_query_params.copy()
             query_params['page'] = page
 
-            print(f'Requesting page #{page}')
+            print('================================================================================')
+            print(f'Requesting page #{page} ({requests_made}/{maxpages})')
             # Returns a Common Wrapper Object
             # https://api.stackexchange.com/docs/wrapper
             r = self.session.get('https://api.stackexchange.com/2.3/questions', params=query_params)
 
             content_type = r.headers.get('content-type', '')
-            content_length = r.headers.get('content-length', 0)
 
-            if r.status_code > 299:
+            # Handle request failures, particularly rate limiting
+            self._handle_response_error(r, _backoff)
 
-                # Too many requests, try slowing down
-                if r.status_code == 429:
-                    retry_after = self._get_retry_after(r)
-                    print(f'Too many requests, retrying in {retry_after} seconds')
-                    time.sleep(retry_after)
-                    continue
-
-                elif content_length == 0:
-                    r.raise_for_status()
-
-                elif 'json' in content_type:
-                    error_json = r.json()
-                    raise requests.HTTPError(f'{r.status_code} {r.reason} API returned error {error_json["error_id"]}: {error_json["error_message"]}')
-                    
-                else:
-                    raise requests.HTTPError(f'{r.status_code} {r.reason}: {r.text}')
-
-                    
-            assert 'json' in content_type # We're expecting JSON back
+            # We're expecting JSON back
+            assert 'json' in content_type, f'Expected response to contain json, got {content_type}'
 
             # Yield each question in the response
             body = r.json()
+            # Extract data from the response
             assert 'items' in body, f'API returned no items: {body}'
+            items: List[StackOverflowQuestion] = body['items']
+            quota_remaining: int = body['quota_remaining']
+            quota_max: int = body['quota_max']
+            has_more: bool = body['has_more']
+            backoff: int = body.get('backoff', 0)
+
+            # Sanity check response properties
             assert isinstance(body['items'], list), f'Expected "items" property of response to be a list, got a {type(body["items"])}'
-            yield body['items']
 
             # Check if we're done
-            quota_remaining = body['quota_remaining']
-            quota_max = body['quota_max']
-            has_more: bool = body['has_more']
-            done = not has_more or body['quota_remaining'] <= 0
-            print(f'Got {pagesize} questions from page #{page} (#pages: {requests_made}/{maxpages}, quota: {quota_remaining}/{quota_max})')
+            done = not has_more or quota_remaining <= 0
 
             requests_made += 1
+            print(f'Got {pagesize} questions from page #{page} (#pages: {requests_made}/{maxpages}, quota: {quota_remaining}/{quota_max})')
+            yield items
             page += 1
-            # print('\r', f'Got {pagesize} questions from page #{page} (quota: {quota_remaining}/{quota_max})', end='')
 
+            # print('\r', f'Got {pagesize} questions from page #{page} (quota: {quota_remaining}/{quota_max})', end='')
 
             # Check if we need to back off before sending more requests. Only necessary if we're not done.
             backoff = body.get('backoff', 0)
             if not done and backoff > 0:
-                print(f'Backoff requested, sleeping for {backoff} seconds')
+                print(f'API requested backoff, sleeping for {backoff} seconds')
                 time.sleep(backoff)
-
-    def _get_retry_after(self, r: requests.Response, default: int = 10) -> int:
-        """
-        Gets the [retry-after](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After)
-        time from a response.
-
-        This is useful for when the API throttles us.
-
-        ## Arguments
-
-        :param r: The response to get the retry-after time from
-        :type r: class:`requests.Response`
-        :param default: The default time, in seconds, to return if the header is
-                        not present. Defaults to 10 seconds.
-        :type default: int
-
-
-
-        """
-        retry_after = r.headers.get('retry-after', default)
-        if isinstance(retry_after, int):
-            return retry_after
-
-        # Retry-After is the seconds to wait before sending another request 
-        elif retry_after.isdigit():
-            return int(retry_after)
-
-        # Retry-After is a [date](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Date)
-        # in the format of "Wed, 31 Dec 2020 23:59:59 GMT"
-        else:
-            retry_at = eut.parsedate_to_datetime(retry_after)
-            now = datetime.datetime.now()
-            wait_duration = retry_at - now
-            return ceil(wait_duration.total_seconds())
-
 
     def scrape_answers(self, url: str) -> List[RawStackOverflowAnswer]:
         """
@@ -354,7 +313,15 @@ class StackOverflowScraper:
         """
 
         # Load the page into BeautifulSoup
-        r = self.session.get(url)
+        retry_after = 1
+        backoff = self._backoff()
+        r: Union[requests.Response, None] = None
+
+        while retry_after > 0:
+            r = self.session.get(url)
+            retry_after = self._handle_response_error(r, backoff)
+        assert r is not None
+
         html_doc = r.text
         soup = BeautifulSoup(html_doc, 'html.parser')
 
@@ -402,6 +369,9 @@ class StackOverflowScraper:
         return answers_parsed
 
     def _scrape_user_details(self, answer: Tag) -> Tuple[Union[int, None], str]:
+        """
+        Scrapes the username and user id of an answer's author.
+        """
         assert answer
 
         # Extract the answer author's user id. Anonymous users have no user id
@@ -453,3 +423,86 @@ class StackOverflowScraper:
                 tag_text = details.prettify() if details else answer.prettify()[0:64]
                 e.args += (f'Failed to parse user details from {tag_text}',)
                 raise e
+
+    def _handle_response_error(self, r: requests.Response, _backoff: Generator[float, None, None]) -> float:
+        if 200 <= r.status_code < 300:
+            return 0
+
+        content_type = r.headers.get('content-type', '')
+        content_length = r.headers.get('content-length', 0)
+
+        # Too many requests, try slowing down
+        if r.status_code == 429:
+            retry_after = self._get_retry_after(r)
+            if retry_after:
+                print(f'Too many requests, got retry-after, retrying in {retry_after:.2f} seconds')
+            else:
+                retry_after = _backoff.__next__()
+                print(f'Too many requests, using exp backoff, retrying in {retry_after:.2f} seconds')
+            time.sleep(retry_after)
+            return retry_after
+
+        # No error details provided in body, just raise the error
+        elif content_length == 0:
+            r.raise_for_status()
+
+        # Try to extract error details from the response body
+        elif 'json' in content_type:
+            error_json = r.json()
+            raise requests.HTTPError(f'{r.status_code} {r.reason} API returned error {error_json["error_id"]}: {error_json["error_message"]}')
+            
+        # Try to extract error details from the response body
+        else:
+            raise requests.HTTPError(f'{r.status_code} {r.reason}: {r.text}')
+
+    def _backoff(self, **kwargs):
+        """Performs exponential backoff with jitter
+
+        """
+        base: int = kwargs.get('base', 1)
+        assert base > 0
+
+        cap: int = kwargs.get('cap', 128)
+        assert cap > 0
+
+        n_attempts: int = kwargs.get('n_attempts', 10)
+        assert n_attempts > 1
+
+        temp = [clamp(10, cap, base * 2 ** (i + 1))
+                for i in range(n_attempts)]
+        backoff: List[float] = [(3/4) * t + random.uniform(0, 1/4 * t) for t in temp]
+        yield from backoff
+
+    def _get_retry_after(self, r: requests.Response) -> Union[int, None]:
+        """
+        Gets the [retry-after](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After)
+        time from a response.
+
+        This is useful for when the API throttles us.
+
+        ## Arguments
+
+        :param r: The response to get the retry-after time from
+        :type r: class:`requests.Response`
+        :param default: The default time, in seconds, to return if the header is
+                        not present. Defaults to 10 seconds.
+        :type default: int
+
+
+
+        """
+        retry_after = r.headers.get('retry-after')
+        if retry_after is None or isinstance(retry_after, int):
+            return retry_after
+
+        # Retry-After is the seconds to wait before sending another request 
+        elif retry_after.isdigit():
+            return int(retry_after)
+
+        # Retry-After is a [date](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Date)
+        # in the format of "Wed, 31 Dec 2020 23:59:59 GMT"
+        else:
+            retry_at = eut.parsedate_to_datetime(retry_after)
+            now = datetime.datetime.now()
+            wait_duration = retry_at - now
+            return ceil(wait_duration.total_seconds())

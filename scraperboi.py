@@ -4,11 +4,13 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 from scrape.stack import StackOverflowScraper
 from urllib.parse import quote_plus
+import datetime
 
 load_dotenv()
 
-page_start: int = 977
+page_start: int = 1185
 maxpages: int = 200
+
 # Connect to MongoDB
 def get_mongo_client() -> MongoClient:
     """
@@ -37,9 +39,11 @@ def get_mongo_client() -> MongoClient:
     client = MongoClient(mongo_uri, tls=True)
     return client
 
+apiKey = os.getenv('STACKOVERFLOW_API_KEY')
 client = get_mongo_client()
 db = client['stackOverflowDB']
 db.command('ping')
 stack = StackOverflowScraper(db=db)
 
-stack.scrape_and_upsert(drop=False, page=page_start, maxpages=maxpages)
+print(f'Scraping started at {datetime.datetime.now()}')
+stack.scrape_and_upsert(drop=False, api_key=apiKey, page=page_start, maxpages=maxpages)
