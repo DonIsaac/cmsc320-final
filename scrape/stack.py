@@ -207,7 +207,14 @@ class StackOverflowScraper:
             content_length = r.headers.get('content-length', 0)
 
             if r.status_code > 299:
-                if content_length == 0:
+
+                # Too many requests, try slowing down
+                if r.status_code == 429:
+                    print('Too many requests, sleeping for 10 seconds')
+                    time.sleep(10)
+                    continue
+
+                elif content_length == 0:
                     r.raise_for_status()
 
                 elif 'json' in content_type:
