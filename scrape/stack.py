@@ -68,6 +68,7 @@ class StackOverflowScraper:
                         each of size `pagesize`. (default: 10)
         """
 
+        print(f'Scraping started at {datetime.datetime.now()}')
         drop: bool = kwargs.get('drop', False)
 
         if self.db is None:
