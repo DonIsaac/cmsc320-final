@@ -7,7 +7,8 @@ from urllib.parse import quote_plus
 
 load_dotenv()
 
-page_start: int = 760
+page_start: int = 977
+maxpages: int = 200
 # Connect to MongoDB
 def get_mongo_client() -> MongoClient:
     """
@@ -41,4 +42,4 @@ db = client['stackOverflowDB']
 db.command('ping')
 stack = StackOverflowScraper(db=db)
 
-stack.scrape_and_upsert(drop=False, page=page_start, maxpages=100)
+stack.scrape_and_upsert(drop=False, page=page_start, maxpages=maxpages)
