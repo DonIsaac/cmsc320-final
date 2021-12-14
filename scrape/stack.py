@@ -104,12 +104,13 @@ class StackOverflowScraper:
         # Iterate over each questions batch obtained from the API
         for page in self.get_questions(**kwargs):
             assert type(page) is list
+            _page_init_size = len(page)
 
             # Remove questions with no answers. Also, questions with low scores are less likely
             # to have useful answers, it's probably just someone insulting the poster for
             # being a noob.
             page = list(filter(lambda q: q['answer_count'] > 0 and q['score'] > 0, page))
-            print(f'Removed {kwargs["pagesize"] - len(page)} questions with no answers or low scores')
+            print(f'Removed {_page_init_size - len(page)} questions with no answers or low scores')
 
             # Mark and store questions with no quality answers
             marked_questions: List[int] = []
@@ -129,9 +130,9 @@ class StackOverflowScraper:
 
                 # Mark the question for removal if it has no quality answers
                 if not len(raw_answers):
-                    print('x', end = '')
+                    print('x', end = '', flush = True)
                     marked_questions.append(q['question_id'])
-                    time.sleep(0.5)
+                    time.sleep(0.75)
                     continue
                 else:
                     print('.', end = '', flush = True)
@@ -468,7 +469,7 @@ class StackOverflowScraper:
         n_attempts: int = kwargs.get('n_attempts', 10)
         assert n_attempts > 1
 
-        temp = [clamp(10, cap, base * 2 ** (i + 1))
+        temp = [clamp(2, cap, base * 2 ** (i + 1))
                 for i in range(n_attempts)]
         backoff: List[float] = [(3/4) * t + random.uniform(0, 1/4 * t) for t in temp]
         yield from backoff

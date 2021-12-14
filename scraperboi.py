@@ -8,7 +8,7 @@ import datetime
 
 load_dotenv()
 
-page_start: int = 1185
+page_start: int = 1193
 maxpages: int = 200
 
 # Connect to MongoDB
