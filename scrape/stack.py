@@ -1,13 +1,17 @@
+from math import ceil
 from bs4.element import ResultSet, Tag
 from pymongo.database import Database
 from pymongo import UpdateOne
 import requests
 import requests_cache # https://requests-cache.readthedocs.io/en/stable/
 import datetime
-from typing import Generator, List, Dict, Optional, Tuple, Union
+from typing import Generator, List, Dict, TypedDict, Optional, Tuple, Union
 import time
 import random
 from bs4 import BeautifulSoup
+import email.utils as eut
+from scrape.types import RawStackOverflowAnswer, StackOverflowAnswer, StackOverflowQuestion
+
 
 class StackOverflowScraper:
     """
@@ -44,6 +48,22 @@ class StackOverflowScraper:
     def __del__(self):
         self.session.close()
 
+    def clean(self, only_expired=False):
+        """Removes cached responses from the cache. 
+
+        This method only does something if :attr:`session` is a :class:`requests_cache.CachedSession`.
+
+        ## Arguments
+
+        :param only_expired: Only remove expired responses rather than _all_ responses, defaults to False
+        :type only_expired: bool, optional
+        """        
+
+        if isinstance(self.session, requests_cache.CachedSession):
+            if not only_expired:
+                self.session.cache.clean()
+            else:
+                self.session.remove_expired_responses(None)
 
 
     def scrape_and_upsert(self, **kwargs) -> None:
@@ -90,8 +110,8 @@ class StackOverflowScraper:
             page = list(filter(lambda q: q['answer_count'] > 0 and q['score'] > 0, page))
 
             # Mark and store questions with no quality answers
-            marked_questions: List[str] = []
-            answers_to_store: List[Dict] = []
+            marked_questions: List[int] = []
+            answers_to_store: List[StackOverflowAnswer] = []
 
             time_start = time.time()
             print(f'Scraping {len(page)} questions ', end='')
@@ -99,14 +119,14 @@ class StackOverflowScraper:
 
                 # Scrape answers for each question
                 try:
-                    answers = self.scrape_answers(q['link'])
+                    raw_answers: List[RawStackOverflowAnswer] = self.scrape_answers(q['link'])
                 except Exception as e:
                     link = q['link']
                     e.args += (f'Failed to scrape question: {link}',)
                     raise e
 
                 # Mark the question for removal if it has no quality answers
-                if not len(answers):
+                if not len(raw_answers):
                     print('x', end = '')
                     marked_questions.append(q['question_id'])
                     continue
@@ -114,8 +134,7 @@ class StackOverflowScraper:
                     print('.', end = '', flush = True)
 
                 # Add the question_id as a foreign key to the answers
-                for a in answers:
-                    a['question_id'] = q['question_id']
+                answers: List[StackOverflowAnswer] = [{'question_id': q['question_id'], **answer} for answer in raw_answers]
 
                 answers_to_store.extend(answers)
 
@@ -142,7 +161,7 @@ class StackOverflowScraper:
 
 
 
-    def get_questions(self, **kwargs) -> Generator[List[Dict], None, None]:
+    def get_questions(self, **kwargs) -> Generator[List[StackOverflowQuestion], None, None]:
         """
         Gets recent questions from Stack Overflow using the Stack Overflow API.
 
@@ -155,7 +174,7 @@ class StackOverflowScraper:
         if one is provided. Providing a key is not necessary, but allows for
         more requests to be made each day.
 
-        ## Keyword arguments:
+        ## Keyword Arguments:
 
         * `pagesize` -- The number of questions to retrieve per API call. Must
                         be 1<= `pagesize` <= 100. (default: 100) 
@@ -211,8 +230,9 @@ class StackOverflowScraper:
 
                 # Too many requests, try slowing down
                 if r.status_code == 429:
-                    print('Too many requests, sleeping for 10 seconds')
-                    time.sleep(10)
+                    retry_after = self._get_retry_after(r)
+                    print(f'Too many requests, retrying in {retry_after} seconds')
+                    time.sleep(retry_after)
                     continue
 
                 elif content_length == 0:
@@ -230,8 +250,8 @@ class StackOverflowScraper:
 
             # Yield each question in the response
             body = r.json()
-            assert 'items' in body
-            assert isinstance(body['items'], list)
+            assert 'items' in body, f'API returned no items: {body}'
+            assert isinstance(body['items'], list), f'Expected "items" property of response to be a list, got a {type(body["items"])}'
             yield body['items']
 
             # Check if we're done
@@ -252,9 +272,42 @@ class StackOverflowScraper:
                 print(f'Backoff requested, sleeping for {backoff} seconds')
                 time.sleep(backoff)
 
+    def _get_retry_after(self, r: requests.Response, default: int = 10) -> int:
+        """
+        Gets the [retry-after](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After)
+        time from a response.
+
+        This is useful for when the API throttles us.
+
+        ## Arguments
+
+        :param r: The response to get the retry-after time from
+        :type r: class:`requests.Response`
+        :param default: The default time, in seconds, to return if the header is
+                        not present. Defaults to 10 seconds.
+        :type default: int
 
 
-    def scrape_answers(self, url: str) -> List[Dict]:
+
+        """
+        retry_after = r.headers.get('retry-after', default)
+        if isinstance(retry_after, int):
+            return retry_after
+
+        # Retry-After is the seconds to wait before sending another request 
+        elif retry_after.isdigit():
+            return int(retry_after)
+
+        # Retry-After is a [date](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Date)
+        # in the format of "Wed, 31 Dec 2020 23:59:59 GMT"
+        else:
+            retry_at = eut.parsedate_to_datetime(retry_after)
+            now = datetime.datetime.now()
+            wait_duration = retry_at - now
+            return ceil(wait_duration.total_seconds())
+
+
+    def scrape_answers(self, url: str) -> List[RawStackOverflowAnswer]:
         """
         Scrapes the answers for a given question URL.
 
@@ -330,7 +383,7 @@ class StackOverflowScraper:
             # Contains the user name and id of the answerer
             author_id, author_name = self._scrape_user_details(answer)
 
-            answer_data = {
+            answer_data: RawStackOverflowAnswer = {
                 # 'question_id': question_id,
                 'snippets': snippets,
                 'score': int(answer['data-score']),
@@ -368,6 +421,7 @@ class StackOverflowScraper:
                         # has shape /user/:id/:name or /user/:id. In the latter
                         # case, the name is in the text of the anchor tag
                         link = details['href']
+                        assert type(link) is str
                         link = link.strip(' /')
                         link = [seg.strip() for seg in link.split('/')]
                         assert len(link) > 1 and 'users' in link[0]

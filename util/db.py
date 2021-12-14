@@ -3,9 +3,9 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 from pymongo.cursor import Cursor
 from pymongo.collection import Collection
-from scrape.stack import StackOverflowScraper
+from scrape.types import StackOverflowAnswer, StackOverflowQuestion
 from urllib.parse import quote_plus
-from typing import Generator, List, Dict, Any
+from typing import Generator, Any
 
 load_dotenv()
 class Database:
@@ -43,8 +43,14 @@ class Database:
         self._db = self._client['stackOverflowDB']
         self._questions = self._db['questions']
         self._answers = self._db['answers']
+
+    def answers(self) -> Collection:
+        return self._answers
+
+    def questions(self) -> Collection:
+        return self._questions
   
-    def get_questions(self, page_num: int = 1, **kwargs) -> Generator[Dict, None, None]:
+    def get_questions(self, page_num: int = 1, **kwargs: int) -> Generator[StackOverflowQuestion, None, None]:
         """
         Returns a generator of questions from the StackOverflow database
 
@@ -59,7 +65,7 @@ class Database:
 
         return self._paginate(self._questions, page_num, **kwargs)
 
-    def get_answers(self, page_num: int = 1, **kwargs) -> Generator[Dict, None, None]:
+    def get_answers(self, page_num: int = 1, **kwargs: int) -> Generator[StackOverflowAnswer, None, None]:
         """
         Returns a generator of answers from the StackOverflow database
 
@@ -74,7 +80,7 @@ class Database:
 
         return self._paginate(self._answers, page_num, **kwargs)
 
-    def get_all_answers(self) -> Generator[Dict, None, None]:
+    def get_all_answers(self) -> Generator[StackOverflowAnswer, None, None]:
         """
         Returns a generator of all answers from the StackOverflow database
         """
@@ -83,7 +89,7 @@ class Database:
         for doc in cursor:
             yield doc
 
-    def _paginate(self, collection: Collection, page_num: int = 1, **kwargs) -> Generator[Any, None, None]:
+    def _paginate(self, collection: Collection, page_num: int = 1, **kwargs: int) -> Generator[Any, None, None]:
         assert type(page_num) == int and page_num > 0, 'page_num must be a positive integer'
 
         page_size = kwargs.get('page_size', 100) # How many pages to return
