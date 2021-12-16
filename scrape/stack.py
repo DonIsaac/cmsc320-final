@@ -1,16 +1,15 @@
+from bs4 import BeautifulSoup
+from bs4.element import Tag
+import email.utils as eut
+import datetime
 from math import ceil
-from bs4.element import ResultSet, Tag
 from pymongo.database import Database
 from pymongo import UpdateOne
-import requests
-from requests.models import HTTPError
-import requests_cache # https://requests-cache.readthedocs.io/en/stable/
-import datetime
-from typing import Generator, List, Dict, TypedDict, Optional, Tuple, Union
-import time
 import random
-from bs4 import BeautifulSoup
-import email.utils as eut
+import requests
+import requests_cache # https://requests-cache.readthedocs.io/en/stable/
+import time
+from typing import Generator, List, Optional, Tuple, Union
 from scrape.types import RawStackOverflowAnswer, StackOverflowAnswer, StackOverflowQuestion
 
 clamp = lambda a, b, x: max(min(x, b), a)

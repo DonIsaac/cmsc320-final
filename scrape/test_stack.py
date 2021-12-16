@@ -1,5 +1,6 @@
 import pytest
 from scrape.stack import StackOverflowScraper
+from scrape.types import is_raw_stackoverflow_answer
 
 @pytest.fixture()
 def stack():
@@ -44,6 +45,8 @@ def test_scrape_stackoverflow_page(stack: StackOverflowScraper):
 
         assert 'author_username' in answer
         assert type(answer['author_username']) is str
+
+        assert is_raw_stackoverflow_answer(answer)
 
     print(test_data[0]['snippets'])
 

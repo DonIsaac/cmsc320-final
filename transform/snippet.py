@@ -158,7 +158,7 @@ class SnippetLexer:
         self.errors: List[str] = [] 
         self.brace_depth = 0
 
-    def lex(self, snippet: str) -> Tuple[List[LexToken], LexerStatus]:
+    def lex(self, snippet: str, **kwargs) -> Tuple[List[LexToken], LexerStatus]:
         """
         Lexes a code snippet and returns a tuple containing the lexed snippet and
         the lexer's status. The status can be 'pending', 'running', 'error', or 'success'.
@@ -172,7 +172,7 @@ class SnippetLexer:
 
         self.status = 'running'
 
-        self._lexer.build()
+        self._lexer.build(**kwargs)
         self._lexer.input(snippet)
         # self._lexer.token()
 

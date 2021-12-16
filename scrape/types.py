@@ -1,4 +1,4 @@
-from typing import List, Dict, TypedDict, Union
+from typing import List, Dict, TypedDict, Union, Any
 
 class StackOverflowQuestion(TypedDict):
     _id: int
@@ -84,6 +84,7 @@ class RawStackOverflowAnswer(TypedDict):
 
     # URL to the answer.
     source: str
+
 class StackOverflowAnswer(RawStackOverflowAnswer):
     """
     A StackOverflow answer as stored in the database.
@@ -97,3 +98,76 @@ class StackOverflowAnswer(RawStackOverflowAnswer):
 
     # ID of the question the answer is for. This is a valid foreign key
     question_id: int
+
+def is_stackoverflow_question(q: Any) -> bool:
+    if q is None or not isinstance(q, dict):
+        return False
+
+    if '_id' not in q or \
+       'answer_count' not in q or \
+       'content_license' not in q or \
+       'creation_date' not in q or \
+       'is_answered' not in q or \
+       'last_activity_date' not in q or \
+       'last_edit_date' not in q or \
+       'link' not in q or \
+       'question_id' not in q or \
+       'score' not in q or \
+       'tags' not in q or \
+       'title' not in q or \
+       'view_count' not in q:
+        return False
+
+    if not isinstance(q['_id'], int) or \
+       not isinstance(q['answer_count'], int) or \
+       not isinstance(q['content_license'], str) or \
+       not isinstance(q['creation_date'], int) or \
+       not isinstance(q['is_answered'], bool) or \
+       not isinstance(q['last_activity_date'], int) or \
+       not isinstance(q['last_edit_date'], int) or \
+       not isinstance(q['link'], str) or \
+       not isinstance(q['question_id'], int) or \
+       not isinstance(q['score'], int) or \
+       not isinstance(q['tags'], list) or \
+       not isinstance(q['title'], str) or \
+       not isinstance(q['view_count'], int):
+        return False
+
+    return True
+
+def is_raw_stackoverflow_answer(a: Any) -> bool:
+    if a is None or not isinstance(a, dict):
+        return False
+
+    if 'answer_id' not in a or \
+       'author_id' not in a or \
+       'author_username' not in a or \
+       'is_accepted' not in a or \
+       'is_highest_scored' not in a or \
+       'question_has_highest_accepted_answer' not in a or \
+       'page_pos' not in a or \
+       'score' not in a or \
+       'snippets' not in a or \
+       'source' not in a:
+        return False
+
+    if not isinstance(a['answer_id'], int) or \
+       not (a['author_id'] is None or isinstance(a['author_id'], int)) or \
+       not isinstance(a['author_username'], str) or \
+       not isinstance(a['is_accepted'], bool) or \
+       not isinstance(a['is_highest_scored'], bool) or \
+       not isinstance(a['question_has_highest_accepted_answer'], bool) or \
+       not isinstance(a['page_pos'], int) or \
+       not isinstance(a['score'], int) or \
+       not isinstance(a['snippets'], str) or \
+       not isinstance(a['source'], str):
+        return False
+
+    return True
+
+def is_stackoverflow_answer(a: Any) -> bool:
+    return is_raw_stackoverflow_answer(a) and \
+        '_id' in a and \
+        isinstance(a['_id'], int) and \
+        'question_id' in a and \
+        isinstance(a['question_id'], int)

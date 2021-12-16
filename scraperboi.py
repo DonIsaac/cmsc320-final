@@ -5,6 +5,7 @@ from pymongo import MongoClient
 from scrape.stack import StackOverflowScraper
 from urllib.parse import quote_plus
 import datetime
+import time
 
 load_dotenv()
 
@@ -45,5 +46,12 @@ db = client['stackOverflowDB']
 db.command('ping')
 stack = StackOverflowScraper(db=db)
 
-print(f'Scraping started at {datetime.datetime.now()}')
+print('--------------------------------------------------------------------------------')
+print(f'----------------- Scraping started at {datetime.datetime.now()} ----------------')
+print('--------------------------------------------------------------------------------')
+print('')
+
+start = time.time()
 stack.scrape_and_upsert(drop=False, api_key=apiKey, page=page_start, maxpages=maxpages)
+duration = time.time() - start
+print(f'Finished scraping {maxpages} pages in {duration:,.2f} seconds')

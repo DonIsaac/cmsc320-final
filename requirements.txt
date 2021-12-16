@@ -1,10 +1,12 @@
 requests
 requests_cache
-pymongo==3.5.1
 dnspython # Required for pymongo[srv]
+pymongo==3.5.1
 pymongo[srv] # Support for mongodb+srv:// URIs
 python_dotenv
 beautifulsoup4
 pytest
 ply
 pycparser
+numpy=1.21.4
+tensorflow

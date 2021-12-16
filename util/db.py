@@ -9,6 +9,9 @@ from typing import Generator, Any
 
 load_dotenv()
 class Database:
+    """
+    A utility class that wraps a MongoDB database.
+    """
 
     # Connect to MongoDB
     def __init__(self):
